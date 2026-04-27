@@ -47,29 +47,55 @@ export default function PlayerScreen({ player, channels }) {
           ref={player.videoRef}
           source={{
             uri: player.currentUrl,
-            headers: Object.keys(player.currentHeaders).length > 0 ? player.currentHeaders : undefined,
+            headers:
+              Object.keys(player.currentHeaders).length > 0
+                ? player.currentHeaders
+                : undefined,
           }}
-          drm={player.currentDrm}
+        
+          // ✅ FIX DRM DI SINI
+          drm={
+            player.currentDrm?.license
+              ? {
+                  type: 'widevine',
+                  licenseServer: player.currentDrm.license,
+                  headers: player.currentDrm.headers || {},
+                }
+              : undefined
+          }
+        
           style={styles.video}
           resizeMode={player.resizeMode}
           controls={false}
           muted={player.isMuted}
           paused={player.appState !== 'active'}
+        
           onLoadStart={() => player.setIsVideoLoading(true)}
+        
           onLoad={(data) => {
             player.setIsVideoLoading(false);
+        
             if (data.videoTracks) {
-              const heights = [...new Set(data.videoTracks.map(t => t.height))].filter(Boolean).sort((a, b) => b - a);
+              const heights = [...new Set(data.videoTracks.map(t => t.height))]
+                .filter(Boolean)
+                .sort((a, b) => b - a);
               player.setAvailableVideoTracks(heights);
             }
+        
             if (data.audioTracks) player.setAvailableAudioTracks(data.audioTracks);
             if (data.textTracks) player.setAvailableTextTracks(data.textTracks);
           }}
+        
           onBuffer={({ isBuffering }) => player.setIsVideoLoading(isBuffering)}
-          onError={player.handleVideoError}
+          onError={(e) => {
+            console.log("VIDEO ERROR:", e);
+            player.handleVideoError(e);
+          }}
+        
           selectedVideoTrack={player.selectedVideo}
           selectedAudioTrack={player.selectedAudio}
           selectedTextTrack={player.selectedText}
+        
           bufferConfig={BUFFER_CONFIG}
         />
       )}
