@@ -19,7 +19,7 @@ const sanitizeHeaderValue = (val) => {
   return clean.length > 0 ? clean : null;
 };
 
-// 3. PENCUCI LOGO — pastikan selalu string URL yang valid
+// 3. PENCUCI LOGO
 const sanitizeLogo = (raw) => {
   if (!raw || typeof raw !== 'string') return FALLBACK_LOGO;
   const trimmed = raw.trim();
@@ -27,20 +27,17 @@ const sanitizeLogo = (raw) => {
   return trimmed;
 };
 
-// 4. FUNGSI UTAMA PARSER
+// 4. PARSER UTAMA
 export const parseM3U = (m3uText, addLog = () => {}) => {
   addLog('PARSER', 'Mulai memproses playlist...');
 
-  const lines          = m3uText.replace(/\r/g, '').split('\n');
+  const lines = m3uText.replace(/\r/g, '').split('\n');
   const parsedChannels = [];
   const tempCategories = new Set();
-  
-  // Penjaga duplicate key — FlatList crash kalau ada tvg-id yang sama
-  const seenIds        = new Map();
+  const seenIds = new Map();
 
-  let currentInfo    = null;
+  let currentInfo = null;
 
-  // FLUSH — simpan channel aktif ke list jika punya minimal 1 URL
   const flush = () => {
     if (currentInfo && currentInfo.urls.length > 0) {
       parsedChannels.push(currentInfo);
@@ -49,110 +46,149 @@ export const parseM3U = (m3uText, addLog = () => {}) => {
   };
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
+    let line = lines[i].trim();
     if (!line) continue;
-    
-    // PERBAIKAN 1: Deteksi EXTM3U ganda (Sesuai Audit)
-    if (line === '#EXTM3U') {
-      if (i > 0) addLog('WARNING', `Ditemukan #EXTM3U duplikat di baris ${i + 1}`);
-      continue;
-    }
 
-    // PERBAIKAN 2: Lewati eksplisit jika URL berupa komentar
-    if (line.startsWith('#http')) {
-      addLog('PARSER', 'SKIP URL komentar: ' + line);
-      continue;
-    }
-
+    if (line === '#EXTM3U') continue;
+    if (line.startsWith('#http')) continue;
     if (line.startsWith('#EXT-X-') || line.startsWith('##')) continue;
 
-    // PERBAIKAN 3: Tangani SEMUA #KODIPROP secara eksplisit agar tidak "bocor"
-    if (line.startsWith('#KODIPROP:')) {
-      if (line.startsWith('#KODIPROP:inputstream.adaptive.license_key=')) {
-        if (currentInfo) {
-          const val = line.split('=').slice(1).join('=').trim();
-          // Hanya tangkap format statis KID:KEY, abaikan format lain
-          if (val.includes(':') && !val.startsWith('{')) {
-            currentInfo.licenseKey = val;
-          }
-        }
+    // ───────────────── DRM TYPE ─────────────────
+    if (line.startsWith('#KODIPROP:inputstream.adaptive.license_type=')) {
+      if (currentInfo) {
+        currentInfo.drmType = line.split('=').pop().trim().toLowerCase();
       }
-      // Abaikan semua baris KODIPROP (baik yang sudah diambil license-nya maupun varian aneh lain)
       continue;
     }
 
-    // ── EXTVLCOPT (Ambil Header HTTP) ──
-    if (line.startsWith('#EXTVLCOPT:http-referrer=')) {
+    // ───────────────── DRM KEY ─────────────────
+    if (line.startsWith('#KODIPROP:inputstream.adaptive.license_key=')) {
       if (currentInfo) {
-        const ref = sanitizeHeaderValue(line.substring(line.indexOf('=') + 1));
-        if (ref) { 
-          currentInfo.headers['Referer'] = ref; 
-          currentInfo.headers['Origin'] = ref; 
+        const val = line.split('=').slice(1).join('=').trim();
+
+        try {
+          // 🔐 CLEARKEY
+          if (currentInfo.drmType === 'clearkey' && val.includes(':')) {
+            const [keyId, key] = val.split(':');
+
+            currentInfo.drm = {
+              type: 'clearkey',
+              keyId: keyId.trim(),
+              key: key.trim()
+            };
+          }
+
+          // 🔐 WIDEVINE
+          else {
+            const parts = val.split('|');
+
+            currentInfo.drm = {
+              type: 'widevine',
+              license: parts[0].trim(),
+              headers: {}
+            };
+
+            if (parts[1]) {
+              parts[1].split('&').forEach(h => {
+                const [k, v] = h.split('=');
+                if (k && v) {
+                  currentInfo.drm.headers[k.trim()] = decodeURIComponent(v.trim());
+                }
+              });
+            }
+          }
+        } catch (e) {
+          addLog('ERROR', 'Gagal parsing DRM: ' + e.message);
         }
       }
       continue;
     }
+
+    // ───────────────── HEADERS ─────────────────
+    if (line.startsWith('#EXTVLCOPT:http-referrer=')) {
+      if (currentInfo) {
+        const ref = sanitizeHeaderValue(line.split('=').slice(1).join('='));
+        if (ref) {
+          currentInfo.headers['Referer'] = ref;
+          currentInfo.headers['Origin'] = ref;
+        }
+      }
+      continue;
+    }
+
     if (line.startsWith('#EXTVLCOPT:http-user-agent=')) {
       if (currentInfo) {
-        const ua = sanitizeHeaderValue(line.substring(line.indexOf('=') + 1));
+        const ua = sanitizeHeaderValue(line.split('=').slice(1).join('='));
         if (ua) currentInfo.headers['User-Agent'] = ua;
       }
       continue;
     }
 
-    // ── #EXTINF (Identitas Channel Baru) ──
+    // ───────────────── EXTINF ─────────────────
     if (line.startsWith('#EXTINF:')) {
-      flush(); // Simpan channel sebelumnya (jika ada) sebelum membuat yang baru
+      flush();
 
-      const idM    = line.match(/tvg-id="(.*?)"/);
-      const logoM  = line.match(/tvg-logo="(.*?)"/);
+      const idM = line.match(/tvg-id="(.*?)"/);
+      const logoM = line.match(/tvg-logo="(.*?)"/);
       const groupM = line.match(/group-title="(.*?)"/);
 
       const commaIdx = line.lastIndexOf(',');
-      let rawName    = commaIdx > -1 ? line.substring(commaIdx + 1).trim() : 'Unknown';
-      rawName        = rawName.replace(/\s*\(\d+[pi]\)/gi, '').replace(/\s*\[.*?\]/g, '').trim() || 'Unknown';
+      let rawName = commaIdx > -1 ? line.substring(commaIdx + 1).trim() : 'Unknown';
+
+      rawName = rawName
+        .replace(/\s*\(\d+[pi]\)/gi, '')
+        .replace(/\s*\[.*?\]/g, '')
+        .trim() || 'Unknown';
 
       const rawGroup = groupM?.[1] ? groupM[1].split(';')[0].trim() : 'Lain-lain';
       if (rawGroup) tempCategories.add(rawGroup);
 
-      // Pastikan ID Unik untuk FlatList
-      let baseId     = idM?.[1] ? idM[1].trim() : '';
-      if (!baseId)    baseId = `ch_${i}_${rawName.replace(/\W/g, '_')}`;
-      const idCount  = (seenIds.get(baseId) ?? 0) + 1;
+      let baseId = idM?.[1] ? idM[1].trim() : '';
+      if (!baseId) baseId = `ch_${i}_${rawName.replace(/\W/g, '_')}`;
+
+      const idCount = (seenIds.get(baseId) ?? 0) + 1;
       seenIds.set(baseId, idCount);
-      const safeId   = idCount === 1 ? baseId : `${baseId}__${idCount}`;
+
+      const safeId = idCount === 1 ? baseId : `${baseId}__${idCount}`;
 
       currentInfo = {
-        id:         safeId,
-        name:       rawName,
-        logo:       sanitizeLogo(logoM?.[1]), 
-        group:      rawGroup,
-        urls:       [],  // Simpan SEMUA URL sebagai Array untuk Fallback!
-        urlIndex:   0,
-        headers:    {},
-        licenseKey: null 
+        id: safeId,
+        name: rawName,
+        logo: sanitizeLogo(logoM?.[1]),
+        group: rawGroup,
+
+        urls: [],
+        urlIndex: 0,
+
+        headers: {},
+
+        drm: null,
+        drmType: null
       };
+
       continue;
     }
 
-    // ── URL STREAM ──
+    // ───────────────── URL ─────────────────
     if (line.startsWith('http') && currentInfo) {
       const cleanUrl = sanitizeUrl(line);
       if (!cleanUrl) continue;
-      
-      // Push setiap URL alternatif ke dalam array urls
+
       currentInfo.urls.push(cleanUrl);
-      
-      // Set .url default sebagai URL urutan pertama
+
       if (currentInfo.urls.length === 1) {
         currentInfo.url = cleanUrl;
       }
+
       continue;
     }
   }
 
-  flush(); // Jangan lupa simpan channel paling terakhir
+  flush();
 
   addLog('PARSER', `✅ ${parsedChannels.length} channel berhasil diproses`);
-  return { parsedChannels, newCategories: Array.from(tempCategories) };
+  return {
+    parsedChannels,
+    newCategories: Array.from(tempCategories)
+  };
 };

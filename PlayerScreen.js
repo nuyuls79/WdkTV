@@ -47,20 +47,29 @@ export default function PlayerScreen({ player, channels }) {
           ref={player.videoRef}
           source={{
             uri: player.currentUrl,
-            headers:
-              Object.keys(player.currentHeaders).length > 0
-                ? player.currentHeaders
-                : undefined,
+            headers: {
+              "User-Agent": "Mozilla/5.0",
+              ...player.currentHeaders
+            }
           }}
         
-          // ✅ FIX DRM DI SINI
           drm={
-            player.currentDrm?.license
-              ? {
-                  type: 'widevine',
-                  licenseServer: player.currentDrm.license,
-                  headers: player.currentDrm.headers || {},
-                }
+            player.currentDrm
+              ? player.currentDrm.type === 'clearkey'
+                ? {
+                    type: 'clearkey',
+                    clearKeys: {
+                      [player.currentDrm.keyId]: player.currentDrm.key
+                    }
+                  }
+                : {
+                    type: 'widevine',
+                    licenseServer: player.currentDrm.license,
+                    headers: {
+                      "User-Agent": "Mozilla/5.0",
+                      ...player.currentDrm.headers
+                    }
+                  }
               : undefined
           }
         
@@ -70,33 +79,10 @@ export default function PlayerScreen({ player, channels }) {
           muted={player.isMuted}
           paused={player.appState !== 'active'}
         
-          onLoadStart={() => player.setIsVideoLoading(true)}
-        
-          onLoad={(data) => {
-            player.setIsVideoLoading(false);
-        
-            if (data.videoTracks) {
-              const heights = [...new Set(data.videoTracks.map(t => t.height))]
-                .filter(Boolean)
-                .sort((a, b) => b - a);
-              player.setAvailableVideoTracks(heights);
-            }
-        
-            if (data.audioTracks) player.setAvailableAudioTracks(data.audioTracks);
-            if (data.textTracks) player.setAvailableTextTracks(data.textTracks);
-          }}
-        
-          onBuffer={({ isBuffering }) => player.setIsVideoLoading(isBuffering)}
           onError={(e) => {
-            console.log("VIDEO ERROR:", e);
-            player.handleVideoError(e);
+            console.log("PLAYER ERROR:", JSON.stringify(e));
+            player.setIsVideoLoading(false);
           }}
-        
-          selectedVideoTrack={player.selectedVideo}
-          selectedAudioTrack={player.selectedAudio}
-          selectedTextTrack={player.selectedText}
-        
-          bufferConfig={BUFFER_CONFIG}
         />
       )}
 
