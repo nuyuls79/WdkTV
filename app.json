@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "AdiTV",
+    "slug": "aditv",
+    "version": "1.0.0",
+    "orientation": "default",
+    "userInterfaceStyle": "dark",
+    "android": {
+      "package": "com.amanhnb88.aditv"
+    },
+    "plugins": [
+      "react-native-video"
+    ]
+  }
+}

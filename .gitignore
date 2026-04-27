@@ -1,0 +1,36 @@
+# Node modules (File mesin yang ukurannya sangat besar)
+node_modules/
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Expo (File cache dari Expo)
+.expo/
+dist/
+web-build/
+
+# Native folders (Karena kamu pakai "npx expo prebuild" di GitHub Actions,
+# folder ini akan dibuat otomatis oleh pabrik GitHub, jadi tidak perlu di-upload)
+android/
+ios/
+
+# Environment variables (Untuk menyimpan API keys atau password rahasia)
+.env
+.env.*
+
+# OS generated files (File sampah dari Mac/Windows)
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Keamanan (Sertifikat dan kunci)
+*.jks
+*.keystore
+*.p8
+*.p12
+*.key
+*.mobileprovision

@@ -1,0 +1,90 @@
+name: Cetak APK AdiTV (Ngebut, Stabil & Bersih)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Tarik Kode dari GitHub
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Siapkan Mesin Node.js & Cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: ☕ Siapkan Java Android
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: 🐘 Setup Gradle & Cache Otomatis
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: 🏗️ Buat Ruang Proyek Steril
+        run: npx create-expo-app@latest PabrikAdiTV --template blank
+
+      - name: 🚚 Pindahkan Semua File Kode ke Root Project
+        run: |
+          # Pindahkan file utama
+          cp App.js PabrikAdiTV/App.js
+          cp config.js PabrikAdiTV/config.js
+          cp parser.js PabrikAdiTV/parser.js
+          cp errorHandler.js PabrikAdiTV/errorHandler.js
+          
+          # Pindahkan hasil refactoring (File Baru)
+          cp useChannels.js PabrikAdiTV/useChannels.js
+          cp usePlayer.js PabrikAdiTV/usePlayer.js
+          cp PlayerScreen.js PabrikAdiTV/PlayerScreen.js
+          cp ChannelList.js PabrikAdiTV/ChannelList.js
+          
+          # Pindahkan aset (Sesuaikan nama file ikonmu)
+          cp icon.png PabrikAdiTV/icon.png || true
+
+      - name: 🧩 Install Alat Tambahan & Safe Area
+        run: |
+          cd PabrikAdiTV
+          # Menambahkan react-native-safe-area-context yang dibutuhkan kode baru
+          npx expo install react-native-video expo-screen-orientation expo-navigation-bar expo-clipboard @expo/vector-icons @react-native-async-storage/async-storage expo-file-system expo-sharing react-native-safe-area-context
+
+      - name: 🛠️ Siapkan Kerangka Android Asli
+        run: |
+          cd PabrikAdiTV
+          npx expo prebuild --platform android --clean
+
+      - name: 🔕 Pasang Peredam Warning & Formula Ngebut
+        run: |
+          cd PabrikAdiTV/android
+          echo "org.gradle.warning.mode=none" >> gradle.properties
+          echo "org.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=512m" >> gradle.properties
+          echo "org.gradle.parallel=true" >> gradle.properties
+          echo "org.gradle.caching=true" >> gradle.properties
+          echo "org.gradle.configuration-cache=false" >> gradle.properties
+          echo "reactNativeArchitectures=arm64-v8a,armeabi-v7a" >> gradle.properties
+          
+          cat << 'EOF' >> build.gradle
+          allprojects {
+              tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+                  kotlinOptions.suppressWarnings = true
+              }
+          }
+          EOF
+
+      - name: 🚀 CETAK APK (VERSI RILIS - BERSIH)
+        run: |
+          cd PabrikAdiTV/android
+          chmod +x gradlew
+          ./gradlew assembleRelease
+
+      - name: 📤 Ambil File APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AdiTV-Release-APK
+          path: PabrikAdiTV/android/app/build/outputs/apk/release/*.apk
