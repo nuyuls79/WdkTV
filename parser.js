@@ -32,7 +32,7 @@ const isValidLicenseUrl = (url) => {
   return url && (url.startsWith('http://') || url.startsWith('https://'));
 };
 
-// 5. VALIDASI CLEARKEY HEX
+// 5. VALIDASI HEX UNTUK CLEARKEY
 const isValidHex = (str) => /^[0-9a-fA-F]+$/.test(str);
 
 // 6. PARSER UTAMA
@@ -57,7 +57,6 @@ export const parseM3U = (m3uText, addLog = () => {}) => {
     let line = lines[i].trim();
     if (!line) continue;
 
-    // Abaikan baris yang tidak relevan
     if (line === '#EXTM3U') continue;
     if (line.startsWith('#http')) continue;
     if (line.startsWith('#EXT-X-') || line.startsWith('##')) continue;
@@ -84,7 +83,6 @@ export const parseM3U = (m3uText, addLog = () => {}) => {
             const cleanKeyId = keyId.trim();
             const cleanKey = key.trim();
 
-            // Validasi: keyId harus hex, key tidak boleh kosong
             if (cleanKeyId && isValidHex(cleanKeyId) && cleanKey) {
               currentInfo.drm = {
                 type: 'clearkey',
@@ -112,7 +110,6 @@ export const parseM3U = (m3uText, addLog = () => {}) => {
               headers: {}
             };
 
-            // Parsing header tambahan (jika ada)
             if (parts[1]) {
               parts[1].split('&').forEach(h => {
                 const [k, v] = h.split('=');
@@ -129,7 +126,7 @@ export const parseM3U = (m3uText, addLog = () => {}) => {
           }
         }
 
-        // 🔐 PLAYREADY (sering digunakan di Xbox / Windows)
+        // 🔐 PLAYREADY
         else if (currentInfo.drmType === 'playready') {
           const parts = rawVal.split('|');
           const licenseUrl = parts[0]?.trim();
@@ -163,7 +160,7 @@ export const parseM3U = (m3uText, addLog = () => {}) => {
         }
       } catch (e) {
         addLog('ERROR', `Gagal parsing DRM (${currentInfo.name}): ${e.message}`);
-        currentInfo.drm = null; // pastikan aman
+        currentInfo.drm = null;
       }
 
       continue;
@@ -227,8 +224,8 @@ export const parseM3U = (m3uText, addLog = () => {}) => {
 
         headers: {},
 
-        drm: null,        // akan diisi jika DRM valid
-        drmType: null     // diisi dari baris license_type (bisa tetap null jika tidak ada)
+        drm: null,
+        drmType: null
       };
 
       continue;
@@ -239,7 +236,7 @@ export const parseM3U = (m3uText, addLog = () => {}) => {
       const cleanUrl = sanitizeUrl(line);
       if (cleanUrl) {
         currentInfo.urls.push(cleanUrl);
-        // URL pertama otomatis jadi url utama (untuk kompatibilitas)
+
         if (currentInfo.urls.length === 1) {
           currentInfo.url = cleanUrl;
         }
@@ -248,7 +245,6 @@ export const parseM3U = (m3uText, addLog = () => {}) => {
     }
   }
 
-  // Flush channel terakhir
   flush();
 
   addLog('PARSER', `✅ ${parsedChannels.length} channel berhasil diproses`);
