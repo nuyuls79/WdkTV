@@ -56,7 +56,7 @@ export const useChannels = () => {
 
     const t = Date.now();
     const URL_ID = `https://raw.githubusercontent.com/amanhnb88/AdiTV/main/streams/id.m3u?t=${t}`;
-    const URL_SUPER = `https://raw.githubusercontent.com/nuyuls79/WdkTV/main/JJ.m3u?t=${t}`;
+    const URL_SUPER = `https://raw.githubusercontent.com/nuyuls79/WdkTV/main/EDIEY.m3u?t=${t}`;
     const HEADERS = { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' };
 
     try {
