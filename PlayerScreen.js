@@ -1,186 +1,319 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, StyleSheet, TouchableOpacity, Text, Image,
-  ActivityIndicator, TouchableWithoutFeedback, Modal, ScrollView
+  View,
+  StyleSheet,
+  TouchableOpacity,
+  Text,
+  Image,
+  ActivityIndicator,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import Video from 'react-native-video';
 import { MaterialIcons } from '@expo/vector-icons';
 
-import { COLORS, LOGO_APP, BUFFER_CONFIG } from './config';
-import { FALLBACK_CHANNELS } from './config';
+import { COLORS, LOGO_APP, BUFFER_CONFIG, FALLBACK_CHANNELS } from './config';
 
 export default function PlayerScreen({ player, channels }) {
+  // ─── CHANNEL AKTIF ────────────────────────────────
+  const currentChannel =
+    channels.find((c) => c.id === player.activeChannelId) || FALLBACK_CHANNELS[0];
 
-  // ─── GET CURRENT CHANNEL ─────────────────────────────
-  const currentChannel = channels.find(c => c.id === player.activeChannelId) || FALLBACK_CHANNELS[0];
+  // State lokal untuk mengontrol rotasi URL & kegagalan total
+  const [urlIndex, setUrlIndex] = useState(0);
+  const [allUrlsFailed, setAllUrlsFailed] = useState(false);
 
-  // ─── URL ACTIVE ──────────────────────────────────────
-  const getCurrentUrl = () => {
-    if (!currentChannel.urls || currentChannel.urls.length === 0) return '';
-    return currentChannel.urls[currentChannel.urlIndex || 0];
-  };
+  // Reset index setiap ganti channel
+  useEffect(() => {
+    setUrlIndex(0);
+    setAllUrlsFailed(false);
+  }, [currentChannel]);
+
+  // ─── URL AKTIF ─────────────────────────────────────
+  const getCurrentUrl = useCallback(() => {
+    const urls = currentChannel?.urls;
+    if (!urls || urls.length === 0) return '';
+    // Jika semua URL sudah gagal, tetap kembalikan string kosong
+    if (allUrlsFailed) return '';
+    return urls[urlIndex] || '';
+  }, [currentChannel, urlIndex, allUrlsFailed]);
 
   const currentUrl = getCurrentUrl();
 
-  // ─── DETECT TYPE ─────────────────────────────────────
+  // ─── DETEKSI TIPE STREAM ──────────────────────────
   const isDash = currentUrl?.includes('.mpd');
-  const isHls  = currentUrl?.includes('.m3u8');
+  const isHls = currentUrl?.includes('.m3u8');
 
-  // ─── SAFE DRM BUILDER ────────────────────────────────
+  // ─── SAFE DRM BUILDER (koreksi & tambahan) ────────
   const buildDrm = () => {
     const drm = currentChannel?.drm;
+    if (!isDash || !drm) return undefined;
 
-    // ❗ kalau bukan DASH → jangan pakai DRM
-    if (!isDash) return undefined;
-
-    if (!drm) return undefined;
-
+    // Validasi properti minimum tiap skema
     try {
-      // CLEARKEY
       if (drm.type === 'clearkey' && drm.keyId && drm.key) {
-        console.log('🔐 Using ClearKey');
+        console.log('🔐 ClearKey DRM applied');
         return {
           type: 'clearkey',
-          clearKeys: {
-            [drm.keyId]: drm.key
-          }
+          clearKeys: { [drm.keyId]: drm.key },
         };
       }
 
-      // WIDEVINE
       if (drm.type === 'widevine' && drm.license) {
-        console.log('🔐 Using Widevine');
+        console.log('🔐 Widevine DRM applied');
         return {
           type: 'widevine',
           licenseServer: drm.license,
-          headers: drm.headers || {}
+          headers: drm.headers || {},
         };
       }
 
-      console.log('⚠️ DRM INVALID → SKIP');
-      return undefined;
+      if (drm.type === 'playready' && drm.license) {
+        console.log('🔐 PlayReady DRM applied');
+        return {
+          type: 'playready',
+          licenseServer: drm.license,
+          headers: drm.headers || {},
+        };
+      }
 
+      console.warn('⚠️ DRM tidak valid, diabaikan');
+      return undefined;
     } catch (e) {
-      console.log('❌ DRM ERROR:', e);
+      console.error('❌ DRM build error:', e);
       return undefined;
     }
   };
 
-  // ─── AUTO FALLBACK URL ───────────────────────────────
+  // ─── COBA URL BERIKUTNYA ──────────────────────────
   const tryNextUrl = () => {
-    if (!currentChannel.urls) return;
+    const urls = currentChannel?.urls;
+    if (!urls || urls.length === 0) {
+      setAllUrlsFailed(true);
+      return;
+    }
 
-    const nextIndex = (currentChannel.urlIndex || 0) + 1;
-
-    if (nextIndex < currentChannel.urls.length) {
-      console.log('🔁 Try next stream:', nextIndex);
-      currentChannel.urlIndex = nextIndex;
-      player.setPlayerKey(k => k + 1);
+    if (urlIndex + 1 < urls.length) {
+      console.log(`🔁 Mencoba URL ${urlIndex + 1}`);
+      setUrlIndex((prev) => prev + 1);
+      // Trigger remount Video dengan key baru
+      player.setPlayerKey((k) => k + 1);
     } else {
-      console.log('❌ All stream failed');
+      console.log('❌ Semua URL gagal');
+      setAllUrlsFailed(true);
     }
   };
 
-  // ─── DEBUG LOG ───────────────────────────────────────
-  React.useEffect(() => {
-    console.log('🎬 PLAY:', currentUrl);
-    console.log('📺 TYPE:', isDash ? 'DASH' : isHls ? 'HLS' : 'OTHER');
+  // ─── RETRY DARI AWAL ──────────────────────────────
+  const retryFromStart = () => {
+    setUrlIndex(0);
+    setAllUrlsFailed(false);
+    player.setPlayerKey((k) => k + 1);
+  };
+
+  // ─── DEBUG LOG ─────────────────────────────────────
+  useEffect(() => {
+    console.log('🎬 PUTAR:', currentUrl || '(tidak ada stream)');
+    console.log('📺 Tipe:', isDash ? 'DASH' : isHls ? 'HLS' : 'OTHER');
     console.log('🔐 DRM:', currentChannel.drm);
   }, [currentUrl]);
 
   return (
     <View style={styles.container}>
+      {/* ─── KONTEN VIDEO (selalu tampil, fallback jika kosong) ─── */}
+      <View style={styles.videoContainer}>
+        {currentUrl ? (
+          <Video
+            key={player.playerKey}
+            ref={player.videoRef}
+            source={{
+              uri: currentUrl,
+              headers:
+                Object.keys(player.currentHeaders).length > 0
+                  ? player.currentHeaders
+                  : undefined,
+            }}
+            drm={buildDrm()}
+            style={styles.video}
+            resizeMode="contain"
+            controls={false}
+            muted={player.isMuted}
+            paused={player.appState !== 'active'}
+            onLoadStart={() => {
+              console.log('⏳ Memuat...');
+              player.setIsVideoLoading(true);
+            }}
+            onLoad={() => {
+              console.log('✅ Loaded');
+              player.setIsVideoLoading(false);
+            }}
+            onBuffer={({ isBuffering }) => {
+              console.log('📡 Buffer:', isBuffering);
+              player.setIsVideoLoading(isBuffering);
+            }}
+            onError={(e) => {
+              console.log('❌ Error:', JSON.stringify(e, null, 2));
+              player.setIsVideoLoading(false);
+              tryNextUrl();
+            }}
+            bufferConfig={BUFFER_CONFIG}
+          />
+        ) : (
+          <View style={styles.fallbackContainer}>
+            <MaterialIcons name="error-outline" size={64} color="#ff6666" />
+            <Text style={styles.fallbackText}>
+              {allUrlsFailed
+                ? 'Semua stream gagal diputar.\nMungkin lisensi DRM tidak valid.'
+                : 'Tidak ada stream tersedia'}
+            </Text>
+            <TouchableOpacity
+              style={styles.retryButton}
+              onPress={retryFromStart}
+            >
+              <MaterialIcons name="refresh" size={22} color="#fff" />
+              <Text style={styles.retryText}>Coba Lagi</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
 
-      {/* VIDEO */}
-      {currentUrl !== '' && (
-        <Video
-          key={player.playerKey}
-          ref={player.videoRef}
-          source={{
-            uri: currentUrl,
-            headers: Object.keys(player.currentHeaders).length
-              ? player.currentHeaders
-              : undefined,
-          }}
-          drm={buildDrm()}
-          style={styles.video}
-          resizeMode="contain"
-          controls={false}
-          muted={player.isMuted}
-          paused={player.appState !== 'active'}
-
-          onLoadStart={() => {
-            console.log('⏳ Loading...');
-            player.setIsVideoLoading(true);
-          }}
-
-          onLoad={() => {
-            console.log('✅ Loaded');
-            player.setIsVideoLoading(false);
-          }}
-
-          onBuffer={({ isBuffering }) => {
-            console.log('📡 Buffer:', isBuffering);
-            player.setIsVideoLoading(isBuffering);
-          }}
-
-          onError={(e) => {
-            console.log('❌ ERROR:', JSON.stringify(e, null, 2));
-            player.setIsVideoLoading(false);
-            tryNextUrl();
-          }}
-
-          bufferConfig={BUFFER_CONFIG}
-        />
-      )}
-
-      {/* LOADING */}
-      {player.isVideoLoading && (
+      {/* LOADING OVERLAY */}
+      {player.isVideoLoading && currentUrl !== '' && (
         <View style={styles.loading}>
           <ActivityIndicator size="large" color="#fff" />
         </View>
       )}
 
-      {/* TAP CONTROL */}
+      {/* TAP CONTROL (layar penuh) */}
       <TouchableWithoutFeedback onPress={player.toggleControls}>
         <View style={StyleSheet.absoluteFill}>
           {player.showControls && (
             <View style={styles.controls}>
-
-              <View style={styles.top}>
-                <Text style={styles.title}>{currentChannel.name}</Text>
-                <Image source={{ uri: LOGO_APP }} style={styles.logo} />
+              {/* Top bar */}
+              <View style={styles.topBar}>
+                <Text style={styles.title} numberOfLines={1}>
+                  {currentChannel.name || 'Channel'}
+                </Text>
+                <Image
+                  source={{ uri: LOGO_APP }}
+                  style={styles.logo}
+                  resizeMode="contain"
+                />
               </View>
 
-              <View style={styles.bottom}>
-                <TouchableOpacity onPress={() => player.setIsMuted(m => !m)}>
-                  <MaterialIcons name={player.isMuted ? 'volume-off' : 'volume-up'} size={26} color="#fff" />
+              {/* Bottom bar */}
+              <View style={styles.bottomBar}>
+                <TouchableOpacity
+                  onPress={() => player.setIsMuted((m) => !m)}
+                  accessibilityLabel="Volume"
+                >
+                  <MaterialIcons
+                    name={player.isMuted ? 'volume-off' : 'volume-up'}
+                    size={26}
+                    color="#fff"
+                  />
                 </TouchableOpacity>
 
-                <TouchableOpacity onPress={player.toggleCustomFullscreen}>
-                  <MaterialIcons name={player.isFullscreen ? 'fullscreen-exit' : 'fullscreen'} size={26} color="#fff" />
+                <TouchableOpacity
+                  onPress={player.toggleCustomFullscreen}
+                  accessibilityLabel="Fullscreen"
+                >
+                  <MaterialIcons
+                    name={
+                      player.isFullscreen
+                        ? 'fullscreen-exit'
+                        : 'fullscreen'
+                    }
+                    size={26}
+                    color="#fff"
+                  />
                 </TouchableOpacity>
               </View>
-
             </View>
           )}
         </View>
       </TouchableWithoutFeedback>
-
     </View>
   );
 }
 
-// ─── STYLE ─────────────────────────────
+// ─── STYLES ─────────────────────────────────────
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
-  video: { width: '100%', height: 220 },
-  loading: { position: 'absolute', width: '100%', height: 220, justifyContent: 'center', alignItems: 'center' },
-
-  controls: { flex: 1, justifyContent: 'space-between', padding: 15 },
-  top: { flexDirection: 'row', justifyContent: 'space-between' },
-  title: { color: '#fff', fontWeight: 'bold' },
-  logo: { width: 80, height: 30 },
-
-  bottom: { flexDirection: 'row', justifyContent: 'flex-end', gap: 20 }
+  container: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  videoContainer: {
+    width: '100%',
+    height: 220,
+    backgroundColor: '#111',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  video: {
+    width: '100%',
+    height: '100%',
+  },
+  // Fallback saat tidak ada stream / semua gagal
+  fallbackContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  fallbackText: {
+    color: '#fff',
+    fontSize: 14,
+    textAlign: 'center',
+    marginVertical: 12,
+    lineHeight: 20,
+  },
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e53935',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 25,
+  },
+  retryText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    marginLeft: 8,
+  },
+  // Loading overlay (hanya di atas video)
+  loading: {
+    position: 'absolute',
+    width: '100%',
+    height: 220,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  // Kontrol UI
+  controls: {
+    flex: 1,
+    justifyContent: 'space-between',
+    padding: 15,
+  },
+  topBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  title: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 18,
+    flex: 1,
+    marginRight: 10,
+  },
+  logo: {
+    width: 80,
+    height: 30,
+  },
+  bottomBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 20,
+    marginBottom: 10,
+  },
 });

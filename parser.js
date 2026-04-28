@@ -27,7 +27,15 @@ const sanitizeLogo = (raw) => {
   return trimmed;
 };
 
-// 4. PARSER UTAMA
+// 4. VALIDASI LICENSE URL
+const isValidLicenseUrl = (url) => {
+  return url && (url.startsWith('http://') || url.startsWith('https://'));
+};
+
+// 5. VALIDASI CLEARKEY HEX
+const isValidHex = (str) => /^[0-9a-fA-F]+$/.test(str);
+
+// 6. PARSER UTAMA
 export const parseM3U = (m3uText, addLog = () => {}) => {
   addLog('PARSER', 'Mulai memproses playlist...');
 
@@ -49,6 +57,7 @@ export const parseM3U = (m3uText, addLog = () => {}) => {
     let line = lines[i].trim();
     if (!line) continue;
 
+    // Abaikan baris yang tidak relevan
     if (line === '#EXTM3U') continue;
     if (line.startsWith('#http')) continue;
     if (line.startsWith('#EXT-X-') || line.startsWith('##')) continue;
@@ -63,28 +72,72 @@ export const parseM3U = (m3uText, addLog = () => {}) => {
 
     // ───────────────── DRM KEY ─────────────────
     if (line.startsWith('#KODIPROP:inputstream.adaptive.license_key=')) {
-      if (currentInfo) {
-        const val = line.split('=').slice(1).join('=').trim();
+      if (!currentInfo) continue;
 
-        try {
-          // 🔐 CLEARKEY
-          if (currentInfo.drmType === 'clearkey' && val.includes(':')) {
-            const [keyId, key] = val.split(':');
+      const rawVal = line.split('=').slice(1).join('=').trim();
 
-            currentInfo.drm = {
-              type: 'clearkey',
-              keyId: keyId.trim(),
-              key: key.trim()
-            };
+      try {
+        // 🔐 CLEARKEY
+        if (currentInfo.drmType === 'clearkey') {
+          if (rawVal.includes(':')) {
+            const [keyId, key] = rawVal.split(':');
+            const cleanKeyId = keyId.trim();
+            const cleanKey = key.trim();
+
+            // Validasi: keyId harus hex, key tidak boleh kosong
+            if (cleanKeyId && isValidHex(cleanKeyId) && cleanKey) {
+              currentInfo.drm = {
+                type: 'clearkey',
+                keyId: cleanKeyId,
+                key: cleanKey
+              };
+              addLog('DRM', `ClearKey OK >> ${currentInfo.name}`);
+            } else {
+              addLog('WARN', `ClearKey tidak valid untuk ${currentInfo.name} – dilewati`);
+            }
+          } else {
+            addLog('WARN', `Format ClearKey salah untuk ${currentInfo.name}`);
           }
+        }
 
-          // 🔐 WIDEVINE
-          else {
-            const parts = val.split('|');
+        // 🔐 WIDEVINE
+        else if (currentInfo.drmType === 'widevine') {
+          const parts = rawVal.split('|');
+          const licenseUrl = parts[0]?.trim();
 
-            currentInfo.drm = {
+          if (isValidLicenseUrl(licenseUrl)) {
+            const drmObj = {
               type: 'widevine',
-              license: parts[0].trim(),
+              license: licenseUrl,
+              headers: {}
+            };
+
+            // Parsing header tambahan (jika ada)
+            if (parts[1]) {
+              parts[1].split('&').forEach(h => {
+                const [k, v] = h.split('=');
+                if (k && v) {
+                  drmObj.headers[k.trim()] = decodeURIComponent(v.trim());
+                }
+              });
+            }
+
+            currentInfo.drm = drmObj;
+            addLog('DRM', `Widevine OK >> ${currentInfo.name}`);
+          } else {
+            addLog('WARN', `Widevine license URL tidak valid untuk ${currentInfo.name} – dilewati`);
+          }
+        }
+
+        // 🔐 PLAYREADY (sering digunakan di Xbox / Windows)
+        else if (currentInfo.drmType === 'playready') {
+          const parts = rawVal.split('|');
+          const licenseUrl = parts[0]?.trim();
+
+          if (isValidLicenseUrl(licenseUrl)) {
+            const drmObj = {
+              type: 'playready',
+              license: licenseUrl,
               headers: {}
             };
 
@@ -92,15 +145,27 @@ export const parseM3U = (m3uText, addLog = () => {}) => {
               parts[1].split('&').forEach(h => {
                 const [k, v] = h.split('=');
                 if (k && v) {
-                  currentInfo.drm.headers[k.trim()] = decodeURIComponent(v.trim());
+                  drmObj.headers[k.trim()] = decodeURIComponent(v.trim());
                 }
               });
             }
+
+            currentInfo.drm = drmObj;
+            addLog('DRM', `PlayReady OK >> ${currentInfo.name}`);
+          } else {
+            addLog('WARN', `PlayReady license URL tidak valid untuk ${currentInfo.name} – dilewati`);
           }
-        } catch (e) {
-          addLog('ERROR', 'Gagal parsing DRM: ' + e.message);
         }
+
+        // DRM lain tidak didukung → kosongkan
+        else {
+          addLog('WARN', `Tipe DRM tidak dikenal (${currentInfo.drmType}) untuk ${currentInfo.name} – diabaikan`);
+        }
+      } catch (e) {
+        addLog('ERROR', `Gagal parsing DRM (${currentInfo.name}): ${e.message}`);
+        currentInfo.drm = null; // pastikan aman
       }
+
       continue;
     }
 
@@ -162,8 +227,8 @@ export const parseM3U = (m3uText, addLog = () => {}) => {
 
         headers: {},
 
-        drm: null,
-        drmType: null
+        drm: null,        // akan diisi jika DRM valid
+        drmType: null     // diisi dari baris license_type (bisa tetap null jika tidak ada)
       };
 
       continue;
@@ -172,18 +237,18 @@ export const parseM3U = (m3uText, addLog = () => {}) => {
     // ───────────────── URL ─────────────────
     if (line.startsWith('http') && currentInfo) {
       const cleanUrl = sanitizeUrl(line);
-      if (!cleanUrl) continue;
-
-      currentInfo.urls.push(cleanUrl);
-
-      if (currentInfo.urls.length === 1) {
-        currentInfo.url = cleanUrl;
+      if (cleanUrl) {
+        currentInfo.urls.push(cleanUrl);
+        // URL pertama otomatis jadi url utama (untuk kompatibilitas)
+        if (currentInfo.urls.length === 1) {
+          currentInfo.url = cleanUrl;
+        }
       }
-
       continue;
     }
   }
 
+  // Flush channel terakhir
   flush();
 
   addLog('PARSER', `✅ ${parsedChannels.length} channel berhasil diproses`);
