@@ -6,7 +6,7 @@ import * as NavigationBar from 'expo-navigation-bar';
 import { CONTROL_HIDE_DELAY } from './config';
 import { parseVideoError } from './errorHandler';
 
-// ─── UTILS DRM CLEARKEY ──────────────────────────────────────────────────────
+// ─── UTILS DRM ──────────────────────────────────────────────────────────────
 const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
 const btoa = (input) => {
   let str = String(input), output = '';
@@ -24,20 +24,34 @@ const hexToBase64 = (hexstring) => {
   return btoa(str);
 };
 
+// 🔁 FUNGSI BARU: Membaca objek drm dari parser.js
 const buildDrmConfig = (ch) => {
-  if (!ch.licenseKey) return undefined;
-  const parts = ch.licenseKey.split(':');
-  if (parts.length < 2) return undefined;
-  
-  const licenseObj = {
-    keys: [{ kty: 'oct', k: hexToBase64(parts[1]), kid: hexToBase64(parts[0]) }],
-    type: 'temporary'
-  };
-  return {
-    type: 'clearkey',
-    licenseServer: `data:application/json;base64,${btoa(JSON.stringify(licenseObj))}`,
-    headers: {}
-  };
+  const drm = ch.drm;        // <-- sekarang membaca dari ch.drm, bukan ch.licenseKey
+  if (!drm) return undefined;
+
+  // ClearKey
+  if (drm.type === 'clearkey' && drm.keyId && drm.key) {
+    const licenseObj = {
+      keys: [{ kty: 'oct', k: hexToBase64(drm.key), kid: hexToBase64(drm.keyId) }],
+      type: 'temporary'
+    };
+    return {
+      type: 'clearkey',
+      licenseServer: `data:application/json;base64,${btoa(JSON.stringify(licenseObj))}`,
+      headers: {}
+    };
+  }
+
+  // Widevine / PlayReady
+  if ((drm.type === 'widevine' || drm.type === 'playready') && drm.license) {
+    return {
+      type: drm.type,
+      licenseServer: drm.license,
+      headers: drm.headers || {}
+    };
+  }
+
+  return undefined;
 };
 
 // ─── CUSTOM HOOK: usePlayer ──────────────────────────────────────────────────
@@ -59,6 +73,9 @@ export const usePlayer = (channels, addLog) => {
   const [playerKey, setPlayerKey] = useState(Date.now());
   const [resizeMode, setResizeMode] = useState('contain');
   const [appState, setAppState] = useState(AppState.currentState);
+
+  // 🆕 State untuk menandai semua URL gagal
+  const [allUrlsFailed, setAllUrlsFailed] = useState(false);
 
   // State UI
   const [showControls, setShowControls] = useState(false);
@@ -84,15 +101,17 @@ export const usePlayer = (channels, addLog) => {
     // Reset index menggunakan Ref, bukan mengubah state langsung (Perbaikan Bug 2)
     activeChannelRef.current = ch;
     urlIndexRef.current = 0;
-    
+    setAllUrlsFailed(false);   // 🆕 reset flag kegagalan
+
     const urlToPlay = ch.urls[0];
     
     addLog("PLAYER", `▶ ${ch.name} (Memuat URL 1/${ch.urls.length})`);
-    if (ch.licenseKey) addLog("DRM", "Menerapkan ClearKey DRM...");
+    const drmConfig = buildDrmConfig(ch);
+    if (drmConfig) addLog("DRM", `Menerapkan ${drmConfig.type} DRM...`);
 
     setCurrentUrl(urlToPlay);
     setCurrentHeaders(ch.headers || {});
-    setCurrentDrm(buildDrmConfig(ch));
+    setCurrentDrm(drmConfig);
     setActiveChannelId(ch.id);
     setPlayerKey(Date.now());
     setShowControls(false);
@@ -110,7 +129,7 @@ export const usePlayer = (channels, addLog) => {
   const handleVideoError = useCallback((e) => {
     const ch = activeChannelRef.current;
     
-    // Perbaikan Bug 2: Fallback dengan increment Ref, bukan mutasi state
+    // Perbaikan Bug 2: Fallback dengan increment Ref
     if (ch && urlIndexRef.current + 1 < ch.urls.length) {
       urlIndexRef.current++;
       addLog("FALLBACK", `Mencoba URL alternatif ${urlIndexRef.current + 1}/${ch.urls.length}`);
@@ -118,6 +137,7 @@ export const usePlayer = (channels, addLog) => {
       setPlayerKey(Date.now());
     } else {
       setIsVideoLoading(false);
+      setAllUrlsFailed(true);   // 🆕 semua URL gagal
       const errInfo = parseVideoError(e);
       addLog("ERROR", `❌ ${errInfo.detail}`);
       if (currentDrm) addLog("DRM", "Kunci lisensi DRM mungkin sudah kadaluarsa.");
@@ -164,6 +184,7 @@ export const usePlayer = (channels, addLog) => {
         addLog("SYSTEM", "App aktif kembali, reload player");
         setPlayerKey(Date.now());
         setIsVideoLoading(true);
+        setAllUrlsFailed(false);
       }
     });
     return () => sub.remove();
@@ -191,6 +212,7 @@ export const usePlayer = (channels, addLog) => {
     availableVideoTracks, setAvailableVideoTracks, selectedVideo, setSelectedVideo,
     availableAudioTracks, setAvailableAudioTracks, selectedAudio, setSelectedAudio,
     availableTextTracks, setAvailableTextTracks, selectedText, setSelectedText,
-    changeChannel, handleVideoError, toggleControls, resetHideTimer, toggleResizeMode, toggleCustomFullscreen
+    changeChannel, handleVideoError, toggleControls, resetHideTimer, toggleResizeMode, toggleCustomFullscreen,
+    allUrlsFailed   // 🆕 tambahan agar PlayerScreen bisa membaca status kegagalan
   };
 };
