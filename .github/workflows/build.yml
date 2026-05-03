@@ -33,35 +33,26 @@ jobs:
 
       - name: 🚚 Pindahkan Semua File Kode ke Root Project
         run: |
-          # Pindahkan file utama
           cp App.js PabrikAdiTV/App.js
           cp config.js PabrikAdiTV/config.js
           cp parser.js PabrikAdiTV/parser.js
           cp errorHandler.js PabrikAdiTV/errorHandler.js
-          
-          # Pindahkan hasil refactoring (File Baru)
           cp useChannels.js PabrikAdiTV/useChannels.js
           cp usePlayer.js PabrikAdiTV/usePlayer.js
           cp PlayerScreen.js PabrikAdiTV/PlayerScreen.js
           cp ChannelList.js PabrikAdiTV/ChannelList.js
-          
-          # Pindahkan aset (Sesuaikan nama file ikonmu)
           cp icon.png PabrikAdiTV/icon.png || true
 
-      - name: 🧩 Install Alat Tambahan & Safe Area
+      - name: 🧩 Install Alat Tambahan (Versi Stabil Expo)
         run: |
           cd PabrikAdiTV
-          # Instal semua dependensi dasar (gunakan versi yang direkomendasikan Expo)
+          # SEMUA dependensi melalui expo install agar config plugin aman
           npx expo install react-native-video expo-screen-orientation expo-navigation-bar \
             expo-clipboard @expo/vector-icons @react-native-async-storage/async-storage \
             expo-file-system expo-sharing react-native-safe-area-context
           
-          # ✅ PENTING: Upgrade react-native-video ke versi alpha terbaru
-          # agar mendukung properti multiSession pada konfigurasi DRM
-          npm install react-native-video@6.0.0-alpha.8 --legacy-peer-deps
-          
-          # Pastikan tidak ada konflik dengan menjalankan expo doctor
-          npx expo doctor --fix-dependencies || true
+          # ❌ JANGAN gunakan npm install versi alpha, karena tidak punya app.plugin.js
+          # npm install react-native-video@6.0.0-alpha.8 --legacy-peer-deps  <-- DIHAPUS
 
       - name: 🛠️ Siapkan Kerangka Android Asli
         run: |
