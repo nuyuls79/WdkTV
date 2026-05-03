@@ -26,7 +26,7 @@ const hexToBase64 = (hexstring) => {
 
 // 🔁 FUNGSI BARU: Membaca objek drm dari parser.js
 const buildDrmConfig = (ch) => {
-  const drm = ch.drm;        // <-- sekarang membaca dari ch.drm, bukan ch.licenseKey
+  const drm = ch.drm;
   if (!drm) return undefined;
 
   // ClearKey
@@ -42,12 +42,15 @@ const buildDrmConfig = (ch) => {
     };
   }
 
-  // Widevine / PlayReady
+  // Widevine / PlayReady (✅ sudah disesuaikan)
   if ((drm.type === 'widevine' || drm.type === 'playready') && drm.license) {
     return {
       type: drm.type,
       licenseServer: drm.license,
-      headers: drm.headers || {}
+      headers: drm.headers || {},
+      // ✅ Tambahan untuk mencegah pemutaran berhenti prematur
+      multiSession: true,
+      contentId: drm.contentId || undefined,
     };
   }
 
@@ -59,7 +62,6 @@ export const usePlayer = (channels, addLog) => {
   const videoRef = useRef(null);
   const hideTimer = useRef(null);
 
-  // PERBAIKAN BUG 4 & BUG 2: Gunakan useRef agar tidak kena Race Condition & Mutasi State
   const activeChannelRef = useRef(null);
   const urlIndexRef = useRef(0);
 
@@ -74,7 +76,6 @@ export const usePlayer = (channels, addLog) => {
   const [resizeMode, setResizeMode] = useState('contain');
   const [appState, setAppState] = useState(AppState.currentState);
 
-  // 🆕 State untuk menandai semua URL gagal
   const [allUrlsFailed, setAllUrlsFailed] = useState(false);
 
   // State UI
@@ -98,10 +99,9 @@ export const usePlayer = (channels, addLog) => {
       return; 
     }
 
-    // Reset index menggunakan Ref, bukan mengubah state langsung (Perbaikan Bug 2)
     activeChannelRef.current = ch;
     urlIndexRef.current = 0;
-    setAllUrlsFailed(false);   // 🆕 reset flag kegagalan
+    setAllUrlsFailed(false);
 
     const urlToPlay = ch.urls[0];
     
@@ -129,7 +129,6 @@ export const usePlayer = (channels, addLog) => {
   const handleVideoError = useCallback((e) => {
     const ch = activeChannelRef.current;
     
-    // Perbaikan Bug 2: Fallback dengan increment Ref
     if (ch && urlIndexRef.current + 1 < ch.urls.length) {
       urlIndexRef.current++;
       addLog("FALLBACK", `Mencoba URL alternatif ${urlIndexRef.current + 1}/${ch.urls.length}`);
@@ -137,7 +136,7 @@ export const usePlayer = (channels, addLog) => {
       setPlayerKey(Date.now());
     } else {
       setIsVideoLoading(false);
-      setAllUrlsFailed(true);   // 🆕 semua URL gagal
+      setAllUrlsFailed(true);
       const errInfo = parseVideoError(e);
       addLog("ERROR", `❌ ${errInfo.detail}`);
       if (currentDrm) addLog("DRM", "Kunci lisensi DRM mungkin sudah kadaluarsa.");
@@ -213,6 +212,6 @@ export const usePlayer = (channels, addLog) => {
     availableAudioTracks, setAvailableAudioTracks, selectedAudio, setSelectedAudio,
     availableTextTracks, setAvailableTextTracks, selectedText, setSelectedText,
     changeChannel, handleVideoError, toggleControls, resetHideTimer, toggleResizeMode, toggleCustomFullscreen,
-    allUrlsFailed   // 🆕 tambahan agar PlayerScreen bisa membaca status kegagalan
+    allUrlsFailed
   };
 };
