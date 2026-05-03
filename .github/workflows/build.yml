@@ -51,8 +51,17 @@ jobs:
       - name: 🧩 Install Alat Tambahan & Safe Area
         run: |
           cd PabrikAdiTV
-          # Menambahkan react-native-safe-area-context yang dibutuhkan kode baru
-          npx expo install react-native-video expo-screen-orientation expo-navigation-bar expo-clipboard @expo/vector-icons @react-native-async-storage/async-storage expo-file-system expo-sharing react-native-safe-area-context
+          # Instal semua dependensi dasar (gunakan versi yang direkomendasikan Expo)
+          npx expo install react-native-video expo-screen-orientation expo-navigation-bar \
+            expo-clipboard @expo/vector-icons @react-native-async-storage/async-storage \
+            expo-file-system expo-sharing react-native-safe-area-context
+          
+          # ✅ PENTING: Upgrade react-native-video ke versi alpha terbaru
+          # agar mendukung properti multiSession pada konfigurasi DRM
+          npm install react-native-video@6.0.0-alpha.8 --legacy-peer-deps
+          
+          # Pastikan tidak ada konflik dengan menjalankan expo doctor
+          npx expo doctor --fix-dependencies || true
 
       - name: 🛠️ Siapkan Kerangka Android Asli
         run: |
